@@ -1,38 +1,474 @@
-name: Build BrainLAN Teacher IPA
+name: Build Teacher IPA
+
 on:
-  push: { branches: [main] }
-  workflow_dispatch: {}
-permissions:
-  contents: write
+  workflow_dispatch:      # the "Run workflow" button on the Actions tab
+
 jobs:
-  ios:
-    runs-on: macos-14
+  build:
+    runs-on: macos-15
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - name: Unpack project
+
+      - name: Create project files
         run: |
-          unzip -q -o brainlan-teacher-ios.zip
-          cp -R brainlan-teacher-ios/. .
+          mkdir -p plugins/quizserver/ios/Sources/QuizServerPlugin www
+          cat > package.json <<'BRAINLAN_EOF_0'
+          {
+            "name": "brainlan-teacher",
+            "version": "1.0.0",
+            "private": true,
+            "description": "BrainLAN Teacher app (iOS) - hosts the classroom quiz; students join from any web browser",
+            "dependencies": {
+              "@capacitor/core": "^7.0.0",
+              "@capacitor/ios": "^7.0.0",
+              "quizserver": "file:plugins/quizserver"
+            },
+            "devDependencies": {
+              "@capacitor/cli": "^7.0.0"
+            }
+          }
+          BRAINLAN_EOF_0
+          cat > capacitor.config.json <<'BRAINLAN_EOF_1'
+          {
+            "appId": "com.brainlan.teacher",
+            "appName": "BrainLAN Teacher",
+            "webDir": "www"
+          }
+          BRAINLAN_EOF_1
+          cat > .npmrc <<'BRAINLAN_EOF_2'
+          install-links=true
+          BRAINLAN_EOF_2
+          cat > plugins/quizserver/package.json <<'BRAINLAN_EOF_3'
+          {
+            "name": "quizserver",
+            "version": "1.0.0",
+            "description": "BrainLAN classroom web + WebSocket server running inside the teacher's iPhone",
+            "main": "index.js",
+            "license": "MIT",
+            "files": ["ios", "index.js", "Quizserver.podspec"],
+            "capacitor": { "ios": { "src": "ios" } },
+            "peerDependencies": { "@capacitor/core": ">=7.0.0" }
+          }
+          BRAINLAN_EOF_3
+          cat > plugins/quizserver/index.js <<'BRAINLAN_EOF_4'
+          module.exports = {};
+          BRAINLAN_EOF_4
+          cat > plugins/quizserver/Quizserver.podspec <<'BRAINLAN_EOF_5'
+          Pod::Spec.new do |s|
+            s.name = 'Quizserver'
+            s.version = '1.0.0'
+            s.summary = 'BrainLAN classroom server for the teacher iPhone'
+            s.license = 'MIT'
+            s.homepage = 'https://github.com/brainlan/brainlan'
+            s.author = 'BrainLAN'
+            s.source = { :git => 'https://github.com/brainlan/brainlan.git', :tag => s.version.to_s }
+            s.source_files = 'ios/Sources/**/*.{swift,h,m,c,cc,mm,cpp}'
+            s.ios.deployment_target = '14.0'
+            s.dependency 'Capacitor'
+            s.swift_version = '5.1'
+          end
+          BRAINLAN_EOF_5
+          cat > plugins/quizserver/ios/Sources/QuizServerPlugin/QuizServerPlugin.swift <<'BRAINLAN_EOF_6'
+          import Foundation
+          import Network
+          import CryptoKit
+          import UIKit
+          import Capacitor
+
+          private final class Conn {
+              let id = UUID()
+              let c: NWConnection
+              var buf = Data()
+              var frag = Data()
+              var isWS = false
+              var sid: String?
+              init(_ c: NWConnection) { self.c = c }
+          }
+
+          /// Runs a tiny web server inside the teacher's iPhone.
+          /// - GET /      -> the BrainLAN game page (students open this in any browser)
+          /// - GET /info  -> {"urls":[...]}
+          /// - /ws        -> WebSocket; student messages go to the app (event "msg"), teacher replies go out via send()
+          @objc(QuizServerPlugin)
+          public class QuizServerPlugin: CAPPlugin, CAPBridgedPlugin {
+              public let identifier = "QuizServerPlugin"
+              public let jsName = "QuizServer"
+              public let pluginMethods: [CAPPluginMethod] = [
+                  CAPPluginMethod(name: "start", returnType: CAPPluginReturnPromise),
+                  CAPPluginMethod(name: "stop", returnType: CAPPluginReturnPromise),
+                  CAPPluginMethod(name: "send", returnType: CAPPluginReturnPromise)
+              ]
+
+              private let q = DispatchQueue(label: "brainlan.quizserver")
+              private var listener: NWListener?
+              private var ready = false
+              private var port: UInt16 = 8080
+              private var conns: [UUID: Conn] = [:]
+              private var html = Data()
+              private let wsGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+              // MARK: - JS API
+
+              @objc func start(_ call: CAPPluginCall) {
+                  let p = UInt16(clamping: call.getInt("port") ?? 8080)
+                  q.async { [weak self] in
+                      guard let self = self else { return }
+                      if self.listener != nil && self.ready && self.port == p {
+                          call.resolve(["urls": self.urls()])
+                          return
+                      }
+                      self.shutdown()
+                      guard let nwPort = NWEndpoint.Port(rawValue: p) else { call.reject("Invalid port"); return }
+                      guard self.loadHTML() else { call.reject("Game page (index.html) was not found inside the app"); return }
+                      do {
+                          let params = NWParameters.tcp
+                          params.allowLocalEndpointReuse = true
+                          let l = try NWListener(using: params, on: nwPort)
+                          self.port = p
+                          // Advertising a Bonjour service makes iOS show the "Local Network" permission prompt right away.
+                          l.service = NWListener.Service(name: "BrainLAN", type: "_http._tcp")
+                          var answered = false
+                          l.stateUpdateHandler = { [weak self] st in
+                              guard let self = self else { return }
+                              switch st {
+                              case .ready:
+                                  self.ready = true
+                                  if !answered { answered = true; call.resolve(["urls": self.urls()]) }
+                              case .failed(let err):
+                                  self.ready = false
+                                  if !answered { answered = true; call.reject("Could not start the classroom server: \(err)") }
+                                  self.shutdown()
+                              default:
+                                  break
+                              }
+                          }
+                          l.newConnectionHandler = { [weak self] nw in self?.accept(nw) }
+                          self.listener = l
+                          l.start(queue: self.q)
+                          DispatchQueue.main.async { UIApplication.shared.isIdleTimerDisabled = true }
+                      } catch {
+                          call.reject("Could not start the classroom server: \(error.localizedDescription)")
+                      }
+                  }
+              }
+
+              @objc func stop(_ call: CAPPluginCall) {
+                  q.async { [weak self] in
+                      self?.shutdown()
+                      call.resolve()
+                  }
+              }
+
+              /// Teacher -> students. If the JSON has a "to" id it goes only to that student, otherwise to everyone.
+              @objc func send(_ call: CAPPluginCall) {
+                  guard let text = call.getString("text") else { call.reject("text is required"); return }
+                  q.async { [weak self] in
+                      guard let self = self else { return }
+                      var to: String?
+                      if let d = text.data(using: .utf8),
+                         let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
+                          to = o["to"] as? String
+                      }
+                      let payload = self.frame(0x1, Data(text.utf8))
+                      for c in self.conns.values where c.isWS {
+                          if to == nil || c.sid == to {
+                              c.c.send(content: payload, completion: .contentProcessed({ _ in }))
+                          }
+                      }
+                      call.resolve()
+                  }
+              }
+
+              // MARK: - Server plumbing (everything below runs on `q`)
+
+              private func shutdown() {
+                  listener?.cancel()
+                  listener = nil
+                  ready = false
+                  for c in conns.values { c.c.cancel() }
+                  conns.removeAll()
+                  DispatchQueue.main.async { UIApplication.shared.isIdleTimerDisabled = false }
+              }
+
+              private func loadHTML() -> Bool {
+                  if let u = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "public"),
+                     let d = try? Data(contentsOf: u) {
+                      html = d
+                      return true
+                  }
+                  return false
+              }
+
+              private func urls() -> [String] {
+                  var out: [String] = []
+                  var ifap: UnsafeMutablePointer<ifaddrs>?
+                  guard getifaddrs(&ifap) == 0, let first = ifap else { return out }
+                  var cur: UnsafeMutablePointer<ifaddrs>? = first
+                  while let node = cur {
+                      let ifa = node.pointee
+                      let flags = Int32(ifa.ifa_flags)
+                      if let sa = ifa.ifa_addr,
+                         sa.pointee.sa_family == UInt8(AF_INET),
+                         (flags & IFF_UP) != 0, (flags & IFF_LOOPBACK) == 0 {
+                          let name = String(cString: ifa.ifa_name)
+                          // en* = Wi-Fi, bridge* = this iPhone's Personal Hotspot
+                          if name.hasPrefix("en") || name.hasPrefix("bridge") {
+                              var buf = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                              if getnameinfo(sa, socklen_t(sa.pointee.sa_len), &buf, socklen_t(buf.count), nil, 0, NI_NUMERICHOST) == 0 {
+                                  let ip = String(cString: buf)
+                                  if !ip.hasPrefix("169.254") { out.append("http://\(ip):\(port)") }
+                              }
+                          }
+                      }
+                      cur = ifa.ifa_next
+                  }
+                  freeifaddrs(ifap)
+                  return out
+              }
+
+              private func accept(_ nw: NWConnection) {
+                  let conn = Conn(nw)
+                  conns[conn.id] = conn
+                  nw.stateUpdateHandler = { [weak self, weak conn] st in
+                      guard let self = self, let conn = conn else { return }
+                      switch st {
+                      case .failed, .cancelled: self.conns[conn.id] = nil
+                      default: break
+                      }
+                  }
+                  nw.start(queue: q)
+                  receive(conn)
+              }
+
+              private func drop(_ conn: Conn) {
+                  conns[conn.id] = nil
+                  conn.c.cancel()
+              }
+
+              private func receive(_ conn: Conn) {
+                  conn.c.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self, weak conn] data, _, isComplete, error in
+                      guard let self = self, let conn = conn else { return }
+                      if let d = data, !d.isEmpty {
+                          conn.buf.append(d)
+                          if conn.isWS { self.parseFrames(conn) } else { self.parseHTTP(conn) }
+                      }
+                      if error != nil || isComplete { self.drop(conn); return }
+                      if self.conns[conn.id] != nil { self.receive(conn) }
+                  }
+              }
+
+              // MARK: HTTP
+
+              private func parseHTTP(_ conn: Conn) {
+                  guard let r = conn.buf.range(of: Data("\r\n\r\n".utf8)) else {
+                      if conn.buf.count > 16384 { drop(conn) }
+                      return
+                  }
+                  let headData = conn.buf.subdata(in: conn.buf.startIndex..<r.lowerBound)
+                  conn.buf = Data(conn.buf[r.upperBound...])
+                  guard let head = String(data: headData, encoding: .utf8) else { drop(conn); return }
+                  var lines = head.components(separatedBy: "\r\n")
+                  let first = lines.removeFirst().split(separator: " ")
+                  guard first.count >= 2 else { drop(conn); return }
+                  var path = String(first[1])
+                  if let qi = path.firstIndex(of: "?") { path = String(path[..<qi]) }
+                  var h: [String: String] = [:]
+                  for l in lines {
+                      if let ci = l.firstIndex(of: ":") {
+                          let k = l[..<ci].lowercased()
+                          let v = l[l.index(after: ci)...].trimmingCharacters(in: .whitespaces)
+                          h[k] = v
+                      }
+                  }
+
+                  if (h["upgrade"] ?? "").lowercased() == "websocket", let key = h["sec-websocket-key"] {
+                      let digest = Insecure.SHA1.hash(data: Data((key + wsGuid).utf8))
+                      let accept = Data(digest).base64EncodedString()
+                      let resp = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: \(accept)\r\n\r\n"
+                      conn.isWS = true
+                      conn.c.send(content: Data(resp.utf8), completion: .contentProcessed({ _ in }))
+                      if !conn.buf.isEmpty { parseFrames(conn) }
+                      return
+                  }
+
+                  switch path {
+                  case "/", "/index.html":
+                      respond(conn, "200 OK", "text/html; charset=utf-8", html)
+                  case "/info":
+                      let json = (try? JSONSerialization.data(withJSONObject: ["urls": urls()])) ?? Data("{\"urls\":[]}".utf8)
+                      respond(conn, "200 OK", "application/json", json)
+                  case "/favicon.ico":
+                      respond(conn, "204 No Content", "text/plain", Data())
+                  default:
+                      respond(conn, "404 Not Found", "text/plain", Data("Not found".utf8))
+                  }
+              }
+
+              private func respond(_ conn: Conn, _ status: String, _ type: String, _ body: Data) {
+                  let head = "HTTP/1.1 \(status)\r\nContent-Type: \(type)\r\nContent-Length: \(body.count)\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
+                  var out = Data(head.utf8)
+                  out.append(body)
+                  conn.c.send(content: out, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed({ _ in }))
+              }
+
+              // MARK: WebSocket
+
+              private func frame(_ op: UInt8, _ payload: Data) -> Data {
+                  var f = Data([0x80 | op])
+                  let n = payload.count
+                  if n < 126 {
+                      f.append(UInt8(n))
+                  } else if n <= 0xFFFF {
+                      f.append(126)
+                      f.append(UInt8((n >> 8) & 0xFF))
+                      f.append(UInt8(n & 0xFF))
+                  } else {
+                      f.append(127)
+                      for i in (0..<8).reversed() { f.append(UInt8((n >> (8 * i)) & 0xFF)) }
+                  }
+                  f.append(payload)
+                  return f
+              }
+
+              private func parseFrames(_ conn: Conn) {
+                  while true {
+                      let b = [UInt8](conn.buf)
+                      if b.count < 2 { return }
+                      let fin = (b[0] & 0x80) != 0
+                      let op = b[0] & 0x0F
+                      let masked = (b[1] & 0x80) != 0
+                      var len = Int(b[1] & 0x7F)
+                      var idx = 2
+                      if len == 126 {
+                          if b.count < 4 { return }
+                          len = (Int(b[2]) << 8) | Int(b[3]); idx = 4
+                      } else if len == 127 {
+                          if b.count < 10 { return }
+                          var l = 0
+                          for i in 2..<10 { l = (l << 8) | Int(b[i]) }
+                          len = l; idx = 10
+                      }
+                      if len < 0 || len > 4_000_000 { drop(conn); return }
+                      var mask: [UInt8] = []
+                      if masked {
+                          if b.count < idx + 4 { return }
+                          mask = Array(b[idx..<(idx + 4)]); idx += 4
+                      }
+                      if b.count < idx + len { return }
+                      var payload = Array(b[idx..<(idx + len)])
+                      if masked { for i in 0..<payload.count { payload[i] ^= mask[i % 4] } }
+                      conn.buf = Data(b[(idx + len)...])
+
+                      switch op {
+                      case 0x8:
+                          conn.c.send(content: frame(0x8, Data()), completion: .contentProcessed({ _ in }))
+                          drop(conn)
+                          return
+                      case 0x9:
+                          conn.c.send(content: frame(0xA, Data(payload)), completion: .contentProcessed({ _ in }))
+                      case 0x0, 0x1, 0x2:
+                          if op == 0x0 { conn.frag.append(contentsOf: payload) } else { conn.frag = Data(payload) }
+                          if fin {
+                              let text = String(data: conn.frag, encoding: .utf8) ?? ""
+                              conn.frag = Data()
+                              if !text.isEmpty { clientText(conn, text) }
+                          }
+                      default:
+                          break
+                      }
+                  }
+              }
+
+              private func clientText(_ conn: Conn, _ text: String) {
+                  guard let d = text.data(using: .utf8),
+                        let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return }
+                  if (obj["type"] as? String) == "hello" {
+                      // Only the app itself can be the teacher; browsers are always students.
+                      conn.c.send(content: frame(0x1, Data("{\"type\":\"hostdenied\"}".utf8)), completion: .contentProcessed({ _ in }))
+                      return
+                  }
+                  if let from = obj["from"] as? String { conn.sid = from }
+                  DispatchQueue.main.async { [weak self] in
+                      self?.notifyListeners("msg", data: ["text": text])
+                  }
+              }
+          }
+          BRAINLAN_EOF_6
+
+      - name: Prepare game page + icon
+        run: |
+          cat > patch.py <<'BRAINLAN_PY'
+          import re,glob,base64,sys
+          cands=[p for p in glob.glob('*.html')]
+          if not cands:
+              print('::error::Upload the BrainLAN game .html file to the repo (any name, in the main folder).'); sys.exit(1)
+          cands.sort(key=lambda p:(p!='index.html',-len(open(p,encoding='utf-8',errors='ignore').read())))
+          src=open(cands[0],encoding='utf-8').read(); print('Using game file:',cands[0])
+          def rep(old,new):
+              global src
+              if src.count(old)>=1: src=src.replace(old,new,1)
+              else: print('WARN: patch not applied:',old[:50])
+          rep('<button class="btn" onclick="show(\'join\');autoRejoin()">📱 STUDENT','<button class="btn" id="stuBtn" onclick="show(\'join\');autoRejoin()">📱 STUDENT')
+          rep('<div class="card"><b>Connection modes:</b>','<div class="card" id="connHelp"><b>Connection modes:</b>')
+          old="$('#conn').textContent='● Teacher: host from this iPhone · Student: join with the teacher address';$('#conn').className='chip wait';$('#hostBtn').innerHTML='🎓 TEACHER<br><small style=\"font-size:12px;font-weight:600;opacity:.85\">Host from this iPhone</small>';$('#jHostWrap').style.display='block';$('#jHost').value=SRV;if(SRV)connectWS(true)}"
+          new="$('#conn').textContent='● Teacher app — students join from any web browser';$('#conn').className='chip wait';$('#hostBtn').innerHTML='🎓 TEACHER<br><small style=\"font-size:12px;font-weight:600;opacity:.85\">Host the quiz from this iPhone</small>';$('#stuBtn').style.display='none';$('#connHelp').style.display='none'}"
+          rep(old,new)
+          old="show('home');document.querySelectorAll('img.appicon')"
+          new="if(!APP&&/^https?:$/.test(location.protocol)&&!/^(localhost|127\\.0\\.0\\.1|\\[::1\\])$/.test(location.hostname)){$('#hostBtn').style.display='none';$('#connHelp').style.display='none'}\nshow('home');document.querySelectorAll('img.appicon')"
+          rep(old,new)
+          open('www/index.html','w',encoding='utf-8').write(src)
+          m=re.search(r'rel="apple-touch-icon" href="data:image/png;base64,([^"]+)"',src)
+          if m: open('icon-src.png','wb').write(base64.b64decode(m.group(1))); print('icon extracted')
+
+          BRAINLAN_PY
+          python3 patch.py
+          if [ -f icon-src.png ]; then sips -z 1024 1024 icon-src.png --out icon-1024.png; fi
+
       - uses: actions/setup-node@v4
-        with: { node-version: 20 }
-      - run: npm install
-      - run: node tools/build-web.js && node tools/verify.js
-      - run: npx cap add ios
-      - run: ruby tools/patch-ios.rb
-      - run: npx cap sync ios
+        with:
+          node-version: 20
+
+      - name: Install packages
+        run: npm install --install-links
+
+      - name: Create the iOS project
+        run: npx cap add ios
+
+      - name: Check the server plugin was registered
+        run: |
+          cat ios/App/App/capacitor.config.json
+          grep -q "QuizServerPlugin" ios/App/App/capacitor.config.json || { echo "::error::QuizServerPlugin was not registered by Capacitor"; exit 1; }
+
+      - name: Settings + icon
+        run: |
+          PL=ios/App/App/Info.plist
+          /usr/libexec/PlistBuddy -c "Add :NSLocalNetworkUsageDescription string BrainLAN lets students on your Wi-Fi or hotspot join your quiz." $PL || true
+          /usr/libexec/PlistBuddy -c "Add :NSBonjourServices array" $PL || true
+          /usr/libexec/PlistBuddy -c "Add :NSBonjourServices:0 string _http._tcp" $PL || true
+          ICON=ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png
+          if [ -f icon-1024.png ] && [ -f "$ICON" ]; then cp icon-1024.png "$ICON"; fi
+
+      - name: Sync web files
+        run: npx cap sync ios
+
       - name: Build (unsigned)
         run: |
+          set -o pipefail
           cd ios/App
           xcodebuild -workspace App.xcworkspace -scheme App -configuration Release \
-            -sdk iphoneos -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
-          mkdir Payload && cp -R build/Build/Products/Release-iphoneos/App.app Payload/
-          zip -qry "$GITHUB_WORKSPACE/BrainLAN-Teacher.ipa" Payload
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build | tail -n 80
+
+      - name: Make the IPA
+        run: |
+          mkdir -p Payload
+          cp -R ios/App/build/Build/Products/Release-iphoneos/App.app Payload/
+          zip -qry BrainLAN-Teacher.ipa Payload
+          ls -lh BrainLAN-Teacher.ipa
+
       - uses: actions/upload-artifact@v4
-        with: { name: BrainLAN-Teacher-ipa, path: BrainLAN-Teacher.ipa }
-      - uses: softprops/action-gh-release@v2
-        if: github.ref == 'refs/heads/main'
         with:
-          tag_name: teacher-ipa-latest
-          name: BrainLAN Teacher IPA (latest build)
-          files: BrainLAN-Teacher.ipa
+          name: BrainLAN-Teacher-IPA
+          path: BrainLAN-Teacher.ipa
