@@ -1,0 +1,36 @@
+<style>
+button[onclick^="show('join')"]{display:none!important}
+#blLock,#blSet{position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;flex-direction:column;padding:24px;text-align:center;font-family:system-ui,sans-serif}
+#blLock{background:linear-gradient(160deg,#3b2fb0,#1f6bff);color:#fff}
+#blSet{background:#000a;z-index:9500}#blSet>div{background:#fff;color:#222;border-radius:16px;padding:18px;width:100%;max-width:420px;text-align:left}
+#blLock[hidden],#blSet[hidden]{display:none}
+.bl-in{width:100%;max-width:320px;padding:12px;border-radius:10px;border:0;font-size:18px;text-align:center;margin:10px 0}
+#blSet .bl-in{max-width:none;border:1px solid #ccc;font-size:14px;text-align:left}
+.bl-b{padding:11px 18px;border:0;border-radius:10px;background:#ffd43b;color:#222;font-weight:700;font-size:15px;margin:4px}
+#blGear{position:fixed;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));z-index:9000;width:44px;height:44px;border-radius:22px;border:0;background:#3b2fb0;color:#fff;font-size:20px;opacity:.85}
+</style>
+<div id="blLock" hidden><h2>🎓 BrainLAN Teacher</h2><p id="blMsg"></p><input id="blPin" class="bl-in" type="password" inputmode="numeric" maxlength="4" placeholder="••••"><button class="bl-b" id="blOk">Unlock</button></div>
+<button id="blGear" aria-label="Settings">⚙️</button>
+<div id="blSet" hidden><div><b>Zapier connection</b><p style="font-size:12px;margin:6px 0">Paste your Zapier <i>Catch Hook</i> URL. When a quiz ends, each student's result is sent to it.</p>
+<input id="blUrl" class="bl-in" placeholder="https://hooks.zapier.com/hooks/catch/…" autocapitalize="none" autocorrect="off">
+<div id="blSt" style="font-size:12px;margin:4px 0"></div>
+<button class="bl-b" id="blSave">Save</button><button class="bl-b" id="blTest">Send test</button><button class="bl-b" id="blPinCh">Change PIN</button><button class="bl-b" id="blX" style="background:#ddd">Close</button></div></div>
+<script>
+(()=>{const LS=localStorage,$=s=>document.querySelector(s);
+const hash=async s=>{s='brainlan:'+s;try{return[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s)))].map(b=>b.toString(16).padStart(2,'0')).join('')}catch(e){let h=5381;for(const c of s)h=(h*33^c.charCodeAt(0))>>>0;return'x'+h}};
+function lock(){const has=!!LS.getItem('bl_pin');$('#blMsg').textContent=has?'Enter your teacher PIN':'Create a 4-digit teacher PIN';$('#blPin').value='';$('#blLock').hidden=false}
+$('#blOk').onclick=async()=>{const v=$('#blPin').value;if(!/^\d{4}$/.test(v))return alert('Use 4 digits.');const h=await hash(v);if(!LS.getItem('bl_pin')){LS.setItem('bl_pin',h);$('#blLock').hidden=true}else if(LS.getItem('bl_pin')===h)$('#blLock').hidden=true;else{alert('Wrong PIN');$('#blPin').value=''}};
+$('#blPinCh').onclick=()=>{if(!confirm('Set a new PIN?'))return;LS.removeItem('bl_pin');$('#blSet').hidden=true;lock()};
+let away=0;document.addEventListener('visibilitychange',()=>{if(document.hidden)away=Date.now();else if(away&&Date.now()-away>60000)lock()});lock();
+// ---- Zapier: one POST per student; unsent results wait in a queue (works offline, retries later) ----
+const QK='bl_zq',getQ=()=>{try{return JSON.parse(LS.getItem(QK)||'[]')}catch(e){return[]}},setQ=q=>LS.setItem(QK,JSON.stringify(q.slice(-500)));
+const st=m=>{$('#blSt').textContent=(m?m+' · ':'')+'Waiting to send: '+getQ().length};
+let busy=false;async function flush(){const u=LS.getItem('bl_zap');if(!u||busy)return;busy=true;const q=getQ();try{while(q.length){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(q[0])});if(r.status>=400)throw 0;q.shift();setQ(q)}st('✅ Sent')}catch(e){st('⚠️ No internet — will retry')}busy=false}
+$('#blGear').onclick=()=>{$('#blUrl').value=LS.getItem('bl_zap')||'';st('');$('#blSet').hidden=false};$('#blX').onclick=()=>$('#blSet').hidden=true;
+$('#blSave').onclick=()=>{const v=$('#blUrl').value.trim();if(v&&!/^https:\/\/hooks\.zapier\.com\//.test(v))return alert('That is not a Zapier webhook URL.');v?LS.setItem('bl_zap',v):LS.removeItem('bl_zap');st('Saved');flush()};
+$('#blTest').onclick=()=>{setQ(getQ().concat({app:'BrainLAN',event:'test',date:new Date().toISOString(),name:'Test Student',score:100}));flush()};
+addEventListener('online',flush);
+function results(){const n=H.quiz.qs.length;return ranked().map((s,i)=>({app:'BrainLAN',event:'student_result',date:new Date().toISOString(),quiz_title:H.quiz.title,quiz_no:H.quiz.no,subject:H.quiz.cat,total_questions:n,rank:i+1,name:s.name,score:s.score,correct:s.correct,incorrect:s.incorrect,percent:n?Math.round(s.correct/n*100):0}))}
+const _end=window.endQuiz;window.endQuiz=function(){const was=H.phase;_end.apply(this,arguments);if(was!=='lobby'&&was!=='ended'&&H.phase==='ended'){try{setQ(getQ().concat(results()));flush()}catch(e){}}};
+})();
+</script>

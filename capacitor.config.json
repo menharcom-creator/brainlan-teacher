@@ -1,0 +1,3 @@
+{"appId":"ph.brainlan.teacher","appName":"BrainLAN Teacher","webDir":"www",
+"ios":{"contentInset":"always"},
+"plugins":{"CapacitorHttp":{"enabled":true}}}

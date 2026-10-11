@@ -1,0 +1,3 @@
+{"appId":"ph.brainlan.student","appName":"BrainLAN","webDir":"www-student",
+"server":{"androidScheme":"http","cleartext":true},
+"android":{"allowMixedContent":true}}
