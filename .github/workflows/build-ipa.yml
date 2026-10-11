@@ -9,6 +9,10 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+      - name: Unpack project
+        run: |
+          unzip -q -o brainlan-teacher-ios.zip
+          cp -R brainlan-teacher-ios/. .
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
       - run: npm install
