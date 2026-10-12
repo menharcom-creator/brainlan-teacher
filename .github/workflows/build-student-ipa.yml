@@ -1,0 +1,111 @@
+name: Build Student IPA
+
+on:
+  workflow_dispatch:      # the "Run workflow" button on the Actions tab
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create project files
+        run: |
+          mkdir -p www
+          cat > package.json <<'BRAINLAN_EOF_0'
+          {
+            "name": "brainlan-student",
+            "version": "1.0.0",
+            "private": true,
+            "dependencies": {
+              "@capacitor/core": "^7.0.0",
+              "@capacitor/ios": "^7.0.0"
+            },
+            "devDependencies": {
+              "@capacitor/cli": "^7.0.0"
+            }
+          }
+          BRAINLAN_EOF_0
+          cat > capacitor.config.json <<'BRAINLAN_EOF_1'
+          {
+            "appId": "com.brainlan.student",
+            "appName": "BrainLAN Student",
+            "webDir": "www"
+          }
+          BRAINLAN_EOF_1
+
+      - name: Prepare game page + icon
+        run: |
+          cat > patch.py <<'BRAINLAN_PY'
+          import re,glob,base64,sys
+          cands=glob.glob('*.html')
+          if not cands:
+              print('::error::Upload the BrainLAN game .html file to the repo (any name, in the main folder).'); sys.exit(1)
+          cands.sort(key=lambda p:(p!='index.html',-len(open(p,encoding='utf-8',errors='ignore').read())))
+          src=open(cands[0],encoding='utf-8').read(); print('Using game file:',cands[0])
+
+          def rep(old,new):
+              global src
+              if src.count(old)>=1: src=src.replace(old,new,1)
+              else: print('WARN: patch not applied:',old[:50])
+          # faster, never-give-up connection (no silent fallback to demo mode on slow Wi-Fi)
+          rep("function connectWS(first){let w,opened=false,t=0;","const REMOTE=!APP&&/^https?:$/.test(location.protocol)&&!/^(localhost|127\\.0\\.0\\.1|\\[::1\\])$/.test(location.hostname);\nfunction connectWS(first){let w,opened=false,t=0;")
+          rep("if(first)t=setTimeout(()=>{if(!opened){try{w.close()}catch(e){}if(APP){$('#jStat').textContent='Cannot reach the teacher at '+SRV;$('#jStat').className='chip bad'}else useBC()}},2500);","if(first)t=setTimeout(()=>{if(!opened){if(REMOTE||APP){$('#jStat').textContent='Still connecting to the teacher… check the Wi-Fi';$('#jStat').className='chip wait'}else{try{w.close()}catch(e){}useBC()}}},(REMOTE||APP)?8000:2500);")
+          rep("else if(!first)setTimeout(()=>connectWS(false),1500)}}","else if(!first||REMOTE||APP)setTimeout(()=>connectWS(false),1000)}}")
+          rep("if(!a.includes(':'))a+=':3000';","if(!a.includes(':'))a+=':8080';")
+          rep('placeholder="192.168.43.100:3000" inputmode="url" autocapitalize="none" autocomplete="off"></div>','placeholder="172.20.10.1:8080" inputmode="url" autocapitalize="none" autocomplete="off"><button class="btn" type="button" style="font-size:14px;min-height:40px;padding:8px 12px;margin:0 0 10px;background:#868e96" onclick="$(\'#jHost\').value=\'127.0.0.1:8080\'">📲 Teacher app is on this iPhone</button></div>')
+
+          rep('<div class="card"><b>Connection modes:</b>','<div class="card" id="connHelp"><b>Connection modes:</b>')
+          rep("$('#conn').textContent='● Teacher: host from this iPhone · Student: join with the teacher address';","$('#conn').textContent='● Student app — enter the teacher address to join';$('#hostBtn').style.display='none';$('#connHelp').style.display='none';")
+
+          open('www/index.html','w',encoding='utf-8').write(src)
+          m=re.search(r'rel="apple-touch-icon" href="data:image/png;base64,([^"]+)"',src)
+          if m: open('icon-src.png','wb').write(base64.b64decode(m.group(1))); print('icon extracted')
+          BRAINLAN_PY
+          python3 patch.py
+          if [ -f icon-src.png ]; then sips -z 1024 1024 icon-src.png --out icon-1024.png; fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install packages
+        run: npm install
+
+      - name: Create the iOS project
+        run: npx cap add ios
+
+      - name: Settings + icon
+        run: |
+          PL=ios/App/App/Info.plist
+          /usr/libexec/PlistBuddy -c "Add :NSLocalNetworkUsageDescription string BrainLAN connects to your teacher's quiz on the classroom Wi-Fi." $PL || true
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" $PL || true
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" $PL || true
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" $PL || true
+          ICON=ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png
+          if [ -f icon-1024.png ] && [ -f "$ICON" ]; then cp icon-1024.png "$ICON"; fi
+
+      - name: Sync web files
+        run: npx cap sync ios
+
+      - name: Build (unsigned)
+        run: |
+          set -o pipefail
+          cd ios/App
+          xcodebuild -workspace App.xcworkspace -scheme App -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build | tail -n 80
+
+      - name: Make the IPA
+        run: |
+          mkdir -p Payload
+          cp -R ios/App/build/Build/Products/Release-iphoneos/App.app Payload/
+          zip -qry BrainLAN-Student.ipa Payload
+          ls -lh BrainLAN-Student.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BrainLAN-Student-IPA
+          path: BrainLAN-Student.ipa
