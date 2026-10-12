@@ -12,7 +12,7 @@ jobs:
 
       - name: Create project files
         run: |
-          mkdir -p plugins/quizserver/ios/Sources/QuizServerPlugin www
+          mkdir -p plugins/quizserver plugins/quizserver/ios/Sources/QuizServerPlugin www
           cat > package.json <<'BRAINLAN_EOF_0'
           {
             "name": "brainlan-teacher",
@@ -106,7 +106,11 @@ jobs:
               private var port: UInt16 = 8080
               private var conns: [UUID: Conn] = [:]
               private var html = Data()
+              private var htmlGz = false
               private let wsGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+              private var starting = false
+              private var waiters: [CAPPluginCall] = []
+              private var candidates: [UInt16] = []
 
               // MARK: - JS API
 
@@ -114,42 +118,81 @@ jobs:
                   let p = UInt16(clamping: call.getInt("port") ?? 8080)
                   q.async { [weak self] in
                       guard let self = self else { return }
-                      if self.listener != nil && self.ready && self.port == p {
+                      if self.listener != nil && self.ready {
                           call.resolve(["urls": self.urls()])
                           return
                       }
-                      self.shutdown()
-                      guard let nwPort = NWEndpoint.Port(rawValue: p) else { call.reject("Invalid port"); return }
-                      guard self.loadHTML() else { call.reject("Game page (index.html) was not found inside the app"); return }
-                      do {
-                          let params = NWParameters.tcp
-                          params.allowLocalEndpointReuse = true
-                          let l = try NWListener(using: params, on: nwPort)
-                          self.port = p
-                          // Advertising a Bonjour service makes iOS show the "Local Network" permission prompt right away.
-                          l.service = NWListener.Service(name: "BrainLAN", type: "_http._tcp")
-                          var answered = false
-                          l.stateUpdateHandler = { [weak self] st in
-                              guard let self = self else { return }
-                              switch st {
-                              case .ready:
-                                  self.ready = true
-                                  if !answered { answered = true; call.resolve(["urls": self.urls()]) }
-                              case .failed(let err):
-                                  self.ready = false
-                                  if !answered { answered = true; call.reject("Could not start the classroom server: \(err)") }
-                                  self.shutdown()
-                              default:
-                                  break
-                              }
-                          }
-                          l.newConnectionHandler = { [weak self] nw in self?.accept(nw) }
-                          self.listener = l
-                          l.start(queue: self.q)
-                          DispatchQueue.main.async { UIApplication.shared.isIdleTimerDisabled = true }
-                      } catch {
-                          call.reject("Could not start the classroom server: \(error.localizedDescription)")
+                      if self.starting {
+                          self.waiters.append(call)
+                          return
                       }
+                      guard self.loadHTML() else { call.reject("Game page (index.html) was not found inside the app"); return }
+                      self.shutdown()
+                      self.starting = true
+                      self.waiters = [call]
+                      var list: [UInt16] = [p]
+                      let extra: [UInt16] = [8081, 8082, 8888, 8000, 3000, 9090, 5000]
+                      for x in extra where !list.contains(x) { list.append(x) }
+                      self.candidates = list
+                      self.tryListen()
+                      DispatchQueue.main.async { UIApplication.shared.isIdleTimerDisabled = true }
+                  }
+              }
+
+              /// Tries the wanted port first, then falls back to the next free one.
+              private func tryListen() {
+                  guard !candidates.isEmpty else {
+                      finish("Could not start the classroom server: no free port was found. Close other apps and try again.")
+                      return
+                  }
+                  let p = candidates.removeFirst()
+                  guard let nwPort = NWEndpoint.Port(rawValue: p) else { tryListen(); return }
+                  do {
+                      let tcp = NWProtocolTCP.Options()
+                      tcp.noDelay = true
+                      tcp.enableKeepalive = true
+                      let params = NWParameters(tls: nil, tcp: tcp)
+                      params.allowLocalEndpointReuse = true
+                      let l = try NWListener(using: params, on: nwPort)
+                      // Advertising a Bonjour service makes iOS show the "Local Network" permission prompt right away.
+                      l.service = NWListener.Service(name: "BrainLAN", type: "_http._tcp")
+                      var settled = false
+                      l.stateUpdateHandler = { [weak self, weak l] st in
+                          guard let self = self else { return }
+                          switch st {
+                          case .ready:
+                              if settled { return }
+                              settled = true
+                              self.port = p
+                              self.ready = true
+                              self.finish(nil)
+                          case .failed:
+                              l?.cancel()
+                              if settled {
+                                  if self.listener === l { self.ready = false }
+                                  return
+                              }
+                              settled = true
+                              if self.listener === l { self.listener = nil }
+                              self.tryListen()
+                          default:
+                              break
+                          }
+                      }
+                      l.newConnectionHandler = { [weak self] nw in self?.accept(nw) }
+                      listener = l
+                      l.start(queue: q)
+                  } catch {
+                      tryListen()
+                  }
+              }
+
+              private func finish(_ err: String?) {
+                  starting = false
+                  let w = waiters
+                  waiters = []
+                  for c in w {
+                      if let e = err { c.reject(e) } else { c.resolve(["urls": urls()]) }
                   }
               }
 
@@ -186,15 +229,25 @@ jobs:
                   listener?.cancel()
                   listener = nil
                   ready = false
+                  starting = false
+                  waiters = []
                   for c in conns.values { c.c.cancel() }
                   conns.removeAll()
                   DispatchQueue.main.async { UIApplication.shared.isIdleTimerDisabled = false }
               }
 
               private func loadHTML() -> Bool {
+                  // A pre-compressed copy (index.html.gz) is much faster to send to 30+ phones at once.
+                  if let u = Bundle.main.url(forResource: "index.html", withExtension: "gz", subdirectory: "public"),
+                     let d = try? Data(contentsOf: u) {
+                      html = d
+                      htmlGz = true
+                      return true
+                  }
                   if let u = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "public"),
                      let d = try? Data(contentsOf: u) {
                       html = d
+                      htmlGz = false
                       return true
                   }
                   return false
@@ -294,7 +347,7 @@ jobs:
 
                   switch path {
                   case "/", "/index.html":
-                      respond(conn, "200 OK", "text/html; charset=utf-8", html)
+                      respond(conn, "200 OK", "text/html; charset=utf-8", html, htmlGz ? "gzip" : nil)
                   case "/info":
                       let json = (try? JSONSerialization.data(withJSONObject: ["urls": urls()])) ?? Data("{\"urls\":[]}".utf8)
                       respond(conn, "200 OK", "application/json", json)
@@ -305,8 +358,9 @@ jobs:
                   }
               }
 
-              private func respond(_ conn: Conn, _ status: String, _ type: String, _ body: Data) {
-                  let head = "HTTP/1.1 \(status)\r\nContent-Type: \(type)\r\nContent-Length: \(body.count)\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
+              private func respond(_ conn: Conn, _ status: String, _ type: String, _ body: Data, _ enc: String? = nil) {
+                  let encLine = enc != nil ? "Content-Encoding: \(enc!)\r\n" : ""
+                  let head = "HTTP/1.1 \(status)\r\nContent-Type: \(type)\r\n\(encLine)Content-Length: \(body.count)\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
                   var out = Data(head.utf8)
                   out.append(body)
                   conn.c.send(content: out, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed({ _ in }))
@@ -400,29 +454,37 @@ jobs:
         run: |
           cat > patch.py <<'BRAINLAN_PY'
           import re,glob,base64,sys
-          cands=[p for p in glob.glob('*.html')]
+          cands=glob.glob('*.html')
           if not cands:
               print('::error::Upload the BrainLAN game .html file to the repo (any name, in the main folder).'); sys.exit(1)
           cands.sort(key=lambda p:(p!='index.html',-len(open(p,encoding='utf-8',errors='ignore').read())))
           src=open(cands[0],encoding='utf-8').read(); print('Using game file:',cands[0])
+
           def rep(old,new):
               global src
               if src.count(old)>=1: src=src.replace(old,new,1)
               else: print('WARN: patch not applied:',old[:50])
+          # faster, never-give-up connection (no silent fallback to demo mode on slow Wi-Fi)
+          rep("function connectWS(first){let w,opened=false,t=0;","const REMOTE=!APP&&/^https?:$/.test(location.protocol)&&!/^(localhost|127\\.0\\.0\\.1|\\[::1\\])$/.test(location.hostname);\nfunction connectWS(first){let w,opened=false,t=0;")
+          rep("if(first)t=setTimeout(()=>{if(!opened){try{w.close()}catch(e){}if(APP){$('#jStat').textContent='Cannot reach the teacher at '+SRV;$('#jStat').className='chip bad'}else useBC()}},2500);","if(first)t=setTimeout(()=>{if(!opened){if(REMOTE||APP){$('#jStat').textContent='Still connecting to the teacher… check the Wi-Fi';$('#jStat').className='chip wait'}else{try{w.close()}catch(e){}useBC()}}},(REMOTE||APP)?8000:2500);")
+          rep("else if(!first)setTimeout(()=>connectWS(false),1500)}}","else if(!first||REMOTE||APP)setTimeout(()=>connectWS(false),1000)}}")
+
           rep('<button class="btn" onclick="show(\'join\');autoRejoin()">📱 STUDENT','<button class="btn" id="stuBtn" onclick="show(\'join\');autoRejoin()">📱 STUDENT')
           rep('<div class="card"><b>Connection modes:</b>','<div class="card" id="connHelp"><b>Connection modes:</b>')
           old="$('#conn').textContent='● Teacher: host from this iPhone · Student: join with the teacher address';$('#conn').className='chip wait';$('#hostBtn').innerHTML='🎓 TEACHER<br><small style=\"font-size:12px;font-weight:600;opacity:.85\">Host from this iPhone</small>';$('#jHostWrap').style.display='block';$('#jHost').value=SRV;if(SRV)connectWS(true)}"
           new="$('#conn').textContent='● Teacher app — students join from any web browser';$('#conn').className='chip wait';$('#hostBtn').innerHTML='🎓 TEACHER<br><small style=\"font-size:12px;font-weight:600;opacity:.85\">Host the quiz from this iPhone</small>';$('#stuBtn').style.display='none';$('#connHelp').style.display='none'}"
           rep(old,new)
           old="show('home');document.querySelectorAll('img.appicon')"
-          new="if(!APP&&/^https?:$/.test(location.protocol)&&!/^(localhost|127\\.0\\.0\\.1|\\[::1\\])$/.test(location.hostname)){$('#hostBtn').style.display='none';$('#connHelp').style.display='none'}\nshow('home');document.querySelectorAll('img.appicon')"
+          new="if(REMOTE){$('#hostBtn').style.display='none';$('#connHelp').style.display='none'}\nshow('home');document.querySelectorAll('img.appicon')"
           rep(old,new)
+          rep("'📶 Students open: '+NETINFO.join('  or  ')","'📶 Students: turn OFF mobile data, then open  '+NETINFO.join('  or  ')")
+
           open('www/index.html','w',encoding='utf-8').write(src)
           m=re.search(r'rel="apple-touch-icon" href="data:image/png;base64,([^"]+)"',src)
           if m: open('icon-src.png','wb').write(base64.b64decode(m.group(1))); print('icon extracted')
-
           BRAINLAN_PY
           python3 patch.py
+          gzip -9 -k -f www/index.html
           if [ -f icon-src.png ]; then sips -z 1024 1024 icon-src.png --out icon-1024.png; fi
 
       - uses: actions/setup-node@v4
