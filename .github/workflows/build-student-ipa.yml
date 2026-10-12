@@ -12,7 +12,7 @@ jobs:
 
       - name: Create project files
         run: |
-          mkdir -p www
+          mkdir -p plugins/braindiscover plugins/braindiscover/ios/Sources/BrainDiscoverPlugin www
           cat > package.json <<'BRAINLAN_EOF_0'
           {
             "name": "brainlan-student",
@@ -20,7 +20,8 @@ jobs:
             "private": true,
             "dependencies": {
               "@capacitor/core": "^7.0.0",
-              "@capacitor/ios": "^7.0.0"
+              "@capacitor/ios": "^7.0.0",
+              "braindiscover": "file:plugins/braindiscover"
             },
             "devDependencies": {
               "@capacitor/cli": "^7.0.0"
@@ -34,6 +35,108 @@ jobs:
             "webDir": "www"
           }
           BRAINLAN_EOF_1
+          cat > .npmrc <<'BRAINLAN_EOF_2'
+          install-links=true
+          BRAINLAN_EOF_2
+          cat > plugins/braindiscover/package.json <<'BRAINLAN_EOF_3'
+          {
+            "name": "braindiscover",
+            "version": "1.0.0",
+            "main": "index.js",
+            "license": "MIT",
+            "files": ["ios", "index.js", "Braindiscover.podspec"],
+            "capacitor": { "ios": { "src": "ios" } },
+            "peerDependencies": { "@capacitor/core": ">=7.0.0" }
+          }
+          BRAINLAN_EOF_3
+          cat > plugins/braindiscover/index.js <<'BRAINLAN_EOF_4'
+          module.exports = {};
+          BRAINLAN_EOF_4
+          cat > plugins/braindiscover/Braindiscover.podspec <<'BRAINLAN_EOF_5'
+          Pod::Spec.new do |s|
+            s.name = 'Braindiscover'
+            s.version = '1.0.0'
+            s.summary = 'Finds the BrainLAN teacher on the Wi-Fi'
+            s.license = 'MIT'
+            s.homepage = 'https://github.com/brainlan/brainlan'
+            s.author = 'BrainLAN'
+            s.source = { :git => 'https://github.com/brainlan/brainlan.git', :tag => s.version.to_s }
+            s.source_files = 'ios/Sources/**/*.{swift,h,m,c,cc,mm,cpp}'
+            s.ios.deployment_target = '14.0'
+            s.dependency 'Capacitor'
+            s.swift_version = '5.1'
+          end
+          BRAINLAN_EOF_5
+          cat > plugins/braindiscover/ios/Sources/BrainDiscoverPlugin/BrainDiscoverPlugin.swift <<'BRAINLAN_EOF_6'
+          import Foundation
+          import Network
+          import Capacitor
+
+          /// Finds the teacher's BrainLAN server on the same Wi-Fi using Bonjour (the teacher app advertises "BrainLAN").
+          @objc(BrainDiscoverPlugin)
+          public class BrainDiscoverPlugin: CAPPlugin, CAPBridgedPlugin {
+              public let identifier = "BrainDiscoverPlugin"
+              public let jsName = "BrainDiscover"
+              public let pluginMethods: [CAPPluginMethod] = [
+                  CAPPluginMethod(name: "find", returnType: CAPPluginReturnPromise)
+              ]
+
+              private var browser: NWBrowser?
+              private var conns: [NWConnection] = []
+              private var finished = false
+
+              @objc func find(_ call: CAPPluginCall) {
+                  DispatchQueue.main.async {
+                      self.stopAll()
+                      self.finished = false
+                      let b = NWBrowser(for: .bonjour(type: "_http._tcp", domain: nil), using: NWParameters())
+                      self.browser = b
+                      b.browseResultsChangedHandler = { [weak self] results, _ in
+                          guard let self = self else { return }
+                          for r in results {
+                              if case let .service(name, _, _, _) = r.endpoint, name.hasPrefix("BrainLAN") {
+                                  self.resolve(r.endpoint, call)
+                              }
+                          }
+                      }
+                      b.start(queue: .main)
+                      DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+                          guard let self = self, !self.finished else { return }
+                          self.finished = true
+                          self.stopAll()
+                          call.resolve(["addr": ""])
+                      }
+                  }
+              }
+
+              private func resolve(_ endpoint: NWEndpoint, _ call: CAPPluginCall) {
+                  let tcp = NWParameters.tcp
+                  if let ip = tcp.defaultProtocolStack.internetProtocol as? NWProtocolIP.Options { ip.version = .v4 }
+                  let c = NWConnection(to: endpoint, using: tcp)
+                  conns.append(c)
+                  c.stateUpdateHandler = { [weak self, weak c] state in
+                      guard let self = self, let c = c, !self.finished else { return }
+                      if case .ready = state,
+                         let remote = c.currentPath?.remoteEndpoint,
+                         case let .hostPort(host, port) = remote,
+                         case let .ipv4(a) = host {
+                          let ip = "\(a)".split(separator: "%").first.map(String.init) ?? "\(a)"
+                          self.finished = true
+                          self.stopAll()
+                          call.resolve(["addr": "\(ip):\(port.rawValue)"])
+                      }
+                  }
+                  c.start(queue: .main)
+              }
+
+              private func stopAll() {
+                  browser?.cancel()
+                  browser = nil
+                  conns.forEach { $0.cancel() }
+                  conns.removeAll()
+              }
+          }
+          BRAINLAN_EOF_6
 
       - name: Prepare game page + icon
         run: |
@@ -53,11 +156,12 @@ jobs:
           rep("function connectWS(first){let w,opened=false,t=0;","const REMOTE=!APP&&/^https?:$/.test(location.protocol)&&!/^(localhost|127\\.0\\.0\\.1|\\[::1\\])$/.test(location.hostname);\nfunction connectWS(first){let w,opened=false,t=0;")
           rep("if(first)t=setTimeout(()=>{if(!opened){try{w.close()}catch(e){}if(APP){$('#jStat').textContent='Cannot reach the teacher at '+SRV;$('#jStat').className='chip bad'}else useBC()}},2500);","if(first)t=setTimeout(()=>{if(!opened){if(REMOTE||APP){$('#jStat').textContent='Still connecting to the teacher… check the Wi-Fi';$('#jStat').className='chip wait'}else{try{w.close()}catch(e){}useBC()}}},(REMOTE||APP)?8000:2500);")
           rep("else if(!first)setTimeout(()=>connectWS(false),1500)}}","else if(!first||REMOTE||APP)setTimeout(()=>connectWS(false),1000)}}")
-          rep("if(!a.includes(':'))a+=':3000';","if(!a.includes(':'))a+=':8080';")
           rep('placeholder="192.168.43.100:3000" inputmode="url" autocapitalize="none" autocomplete="off"></div>','placeholder="172.20.10.1:8080" inputmode="url" autocapitalize="none" autocomplete="off"><button class="btn" type="button" style="font-size:14px;min-height:40px;padding:8px 12px;margin:0 0 10px;background:#868e96" onclick="$(\'#jHost\').value=\'127.0.0.1:8080\'">📲 Teacher app is on this iPhone</button></div>')
 
           rep('<div class="card"><b>Connection modes:</b>','<div class="card" id="connHelp"><b>Connection modes:</b>')
-          rep("$('#conn').textContent='● Teacher: host from this iPhone · Student: join with the teacher address';","$('#conn').textContent='● Student app — enter the teacher address to join';$('#hostBtn').style.display='none';$('#connHelp').style.display='none';")
+          rep("$('#conn').textContent='● Teacher: host from this iPhone · Student: join with the teacher address';","$('#conn').textContent='● Student app';$('#hostBtn').style.display='none';$('#connHelp').style.display='none';")
+          rep("$('#jHostWrap').style.display='block';$('#jHost').value=SRV;","$('#jHost').value=SRV;")
+          rep("show('home');document.querySelectorAll('img.appicon')","if(APP&&!sessionStorage.getItem('smq'))setTimeout(goStudent,50);\nshow('home');document.querySelectorAll('img.appicon')")
 
           open('www/index.html','w',encoding='utf-8').write(src)
           m=re.search(r'rel="apple-touch-icon" href="data:image/png;base64,([^"]+)"',src)
@@ -71,15 +175,21 @@ jobs:
           node-version: 20
 
       - name: Install packages
-        run: npm install
+        run: npm install --install-links
 
       - name: Create the iOS project
         run: npx cap add ios
+
+      - name: Check the discovery plugin
+        run: |
+          grep -q "BrainDiscoverPlugin" ios/App/App/capacitor.config.json && echo "auto-find plugin registered" || echo "::warning::auto-find plugin was not registered (manual address will still work)"
 
       - name: Settings + icon
         run: |
           PL=ios/App/App/Info.plist
           /usr/libexec/PlistBuddy -c "Add :NSLocalNetworkUsageDescription string BrainLAN connects to your teacher's quiz on the classroom Wi-Fi." $PL || true
+          /usr/libexec/PlistBuddy -c "Add :NSBonjourServices array" $PL || true
+          /usr/libexec/PlistBuddy -c "Add :NSBonjourServices:0 string _http._tcp" $PL || true
           /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" $PL || true
           /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" $PL || true
           /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" $PL || true
