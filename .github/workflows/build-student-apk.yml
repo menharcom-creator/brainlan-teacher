@@ -82,6 +82,84 @@ jobs:
       - name: Create the Android project
         run: npx cap add android
 
+      - name: Set the app icon (Android)
+        run: |
+          python3 -c "import PIL" 2>/dev/null || pip install --quiet --break-system-packages pillow || pip install --quiet pillow
+          cat > mkicon.py <<'BRAINLAN_ICON'
+          import os
+          from PIL import Image, ImageDraw
+          BG = (59, 47, 176, 255)
+          src = None
+          for p in ['AppIcon-512@2x.png', 'icon-src.png', 'icon-1024.png']:
+              if os.path.exists(p):
+                  src = Image.open(p).convert('RGBA')
+                  print('icon from', p)
+                  break
+          if src is None:
+              print('no icon file found; keeping the default icon')
+              raise SystemExit(0)
+          w, h = src.size
+          s = min(w, h)
+          src = src.crop(((w - s) // 2, (h - s) // 2, (w - s) // 2 + s, (h - s) // 2 + s))
+          flat = Image.new('RGBA', src.size, BG)
+          flat.alpha_composite(src)
+          flat = flat.convert('RGB')
+          def avg(img, box):
+              reg = img.crop(box).resize((1, 1), Image.BOX)
+              return reg.getpixel((0, 0))
+          n = max(4, int(s * 0.06))
+          c1 = avg(flat, (0, 0, n, n))
+          c2 = avg(flat, (s - n, s - n, s, s))
+          res = 'android/app/src/main/res'
+          dens = [('mdpi', 48, 108), ('hdpi', 72, 162), ('xhdpi', 96, 216), ('xxhdpi', 144, 324), ('xxxhdpi', 192, 432)]
+          for d, l, f in dens:
+              folder = res + '/mipmap-' + d
+              os.makedirs(folder, exist_ok=True)
+              sq = flat.resize((l, l), Image.LANCZOS)
+              mask = Image.new('L', (l * 4, l * 4), 0)
+              ImageDraw.Draw(mask).rounded_rectangle((0, 0, l * 4 - 1, l * 4 - 1), radius=int(l * 4 * 0.2), fill=255)
+              mask = mask.resize((l, l), Image.LANCZOS)
+              a = sq.convert('RGBA')
+              a.putalpha(mask)
+              a.save(folder + '/ic_launcher.png')
+              cm = Image.new('L', (l * 4, l * 4), 0)
+              ImageDraw.Draw(cm).ellipse((0, 0, l * 4 - 1, l * 4 - 1), fill=255)
+              cm = cm.resize((l, l), Image.LANCZOS)
+              r = sq.convert('RGBA')
+              r.putalpha(cm)
+              r.save(folder + '/ic_launcher_round.png')
+              inner = int(f * 0.70)
+              fg = Image.new('RGBA', (f, f), (0, 0, 0, 0))
+              pic = flat.resize((inner, inner), Image.LANCZOS).convert('RGBA')
+              fg.paste(pic, ((f - inner) // 2, (f - inner) // 2))
+              fg.save(folder + '/ic_launcher_foreground.png')
+              bgimg = Image.new('RGB', (f, f))
+              px = bgimg.load()
+              for yy in range(f):
+                  for xx in range(f):
+                      t = (xx + yy) / (2.0 * (f - 1))
+                      px[xx, yy] = (int(c1[0] + (c2[0] - c1[0]) * t), int(c1[1] + (c2[1] - c1[1]) * t), int(c1[2] + (c2[2] - c1[2]) * t))
+              bgimg.save(folder + '/ic_launcher_background.png')
+          os.makedirs(res + '/values', exist_ok=True)
+          open(res + '/values/ic_launcher_background.xml', 'w').write("""<?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <color name="ic_launcher_background">#3B2FB0</color>
+          </resources>
+          """)
+          os.makedirs(res + '/mipmap-anydpi-v26', exist_ok=True)
+          adaptive = """<?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@mipmap/ic_launcher_background"/>
+              <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+          </adaptive-icon>
+          """
+          open(res + '/mipmap-anydpi-v26/ic_launcher.xml', 'w').write(adaptive)
+          open(res + '/mipmap-anydpi-v26/ic_launcher_round.xml', 'w').write(adaptive)
+          print('launcher icons written')
+          BRAINLAN_ICON
+          python3 mkicon.py
+          ls -l android/app/src/main/res/mipmap-xxxhdpi/
+
       - name: Add automatic teacher discovery (Android)
         run: |
           D=android/app/src/main/java/com/brainlan/student
