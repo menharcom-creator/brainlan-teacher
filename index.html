@@ -241,16 +241,17 @@ table{font-size:12px}th,td{padding:7px}
 <div class="card"><h3>Student monitor</h3><div class="tw"><table><thead><tr><th>Student</th><th>Status</th><th>Current Q</th><th>Answered</th><th>Correct</th><th>Incorrect</th><th>Unanswered</th><th>Score</th><th>Progress</th><th></th></tr></thead><tbody id="hTable"></tbody></table></div></div>
 <div class="card"><h3>🏆 Leaderboard</h3><div id="hPod"></div><div class="tw"><table><thead><tr><th>Rank</th><th>Student</th><th>Score</th><th>Correct</th><th>Incorrect</th><th>Progress</th><th>Awards</th></tr></thead><tbody id="hBoard"></tbody></table></div></div>
 <div class="card" id="hItemCard" style="overflow-x:hidden" hidden><h3>📊 Item Analysis</h3><div id="hItems"></div></div>
-<div class="card" id="hAwCard" hidden><h3>🏅 Awards</h3><div id="hAwards"></div></div>
+<div class="card" id="hAwCard" hidden><h3>🏅 Major Awards</h3><div id="hAwards"></div></div>
 </section>
 
 <section class="view" id="record" hidden>
 <div class="sh"><button class="back" onclick="recBack()" aria-label="Back"><svg class="ic"><use href="#i-back"/></svg></button><div><h2>Class Record</h2><p>Scores from every quiz you have run.</p></div><span class="d" style="right:70px;top:0;font-size:22px">+</span><span class="d" style="right:38px;top:10px;font-size:18px">÷</span><span class="d" style="right:8px;top:2px;font-size:20px">π</span></div>
 <div class="sc"><div class="row"><label style="flex:1">Number of quizzes (1–20)<input id="rN" type="number" min="1" max="20"></label>
-<button class="btn sm" onclick="setRN()">Apply</button><button class="btn w sm" onclick="recCsv()">⬇ CSV</button><button class="btn r sm" onclick="clearRec()">Clear all</button><button class="btn sm" onclick="recBack()">← Back</button></div>
-<p><small>Scores are saved automatically when a quiz ends, under the Quiz # you chose. Students are matched by name.</small></p>
+<button class="btn sm" onclick="setRN()">Apply</button><button class="btn w sm" onclick="recCsv()">⬇ CSV</button><button class="btn r sm" onclick="clearRec()">🧹 Reset all to zero</button><button class="btn sm" onclick="recBack()">← Back</button></div>
+<p><small>Scores are saved automatically when a quiz ends, under the Quiz # you chose. Students are matched by name. 🧹 on a row resets that student back to zero.</small></p>
+<div class="card" style="margin:8px 0"><b>🎓 Honors by final average</b> <small>(shown to students only at the end of the last quiz, Quiz # = Number of quizzes; a quiz not taken counts as 0)</small><div class="row" style="margin-top:6px"><label style="flex:1;min-width:70px">🥇 Highest ≥<input id="hn0" type="number" min="1" max="100"></label><label style="flex:1;min-width:70px">🥈 High ≥<input id="hn1" type="number" min="1" max="100"></label><label style="flex:1;min-width:70px">🥉 Honor ≥<input id="hn2" type="number" min="1" max="100"></label><label style="flex:1;min-width:70px">🎖️ Achiever ≥<input id="hn3" type="number" min="1" max="100"></label><button class="btn sm" onclick="setHon()">Save</button></div></div>
 <div class="tw"><table><thead id="rHead"></thead><tbody id="rBody"></tbody></table></div>
-<h3 style="margin-top:16px">🏅 Subject Awards <small>(90% average or higher, top of the class)</small></h3><div id="rAwards"></div></div></section>
+<h3 style="margin-top:16px">🏅 Major Awards <small>(Best in each subject = top average, 90% or higher · Honors appear after the last quiz)</small></h3><div id="rAwards"></div></div></section>
 
 <section class="view" id="auth" hidden>
 <div class="sh"><button class="back" onclick="location.reload()" aria-label="Back"><svg class="ic"><use href="#i-back"/></svg></button><div><h2>Student Account</h2><p id="auSub">Create your account once. Next time you are logged in automatically.</p></div></div>
@@ -348,10 +349,29 @@ function podium(l){if(!l||!l.length)return'';const med=['#f5b301','#adb5bd','#cd
 const top=`<div class='podw'>${cell(l[1],1,'l')}${cell(l[0],0,'xl')}${cell(l[2],2,'l')}</div>`;
 const rest=l.slice(3).map((x,i)=>`<div class='q-ed row${x.y?' your':''}'><b>#${i+4}</b> ${av(x.a,'s')}<b>${esc(x.n)}${x.y?' (you)':''}</b><span style='margin-left:auto'><b>${x.s}</b> pts</span></div>`).join('');
 return top+(rest?`<div class='prest'>${rest}</div>`:'')}
-function awardList(p){const a=[],pc=p.correct/p.n;if(p.rank===1)a.push(['🥇','Class Champion','Top score in the class']);if(p.rank===2)a.push(['🥈','Brilliant Mind','2nd place']);if(p.rank===3)a.push(['🥉','Rising Star','3rd place']);if(pc===1)a.push(['💯','Perfect Score','Every answer correct']);else if(pc>=.9)a.push(['🎯','Sharpshooter','90% or higher']);if(p.streak>=5)a.push(['🔥','Hot Streak',p.streak+' correct in a row']);if(p.fast)a.push(['⚡','Speed Demon','Fastest correct answers']);if(pc>=.75)a.push(['🌟','Honor Student','75% or higher']);if(p.answered>=p.n)a.push(['✅','Finisher','Answered every question']);if(pc<.75)a.push(['💪','Keep Going','Every try makes you stronger']);return a}
+/* ===== MAJOR AWARDS ONLY: "Best in <subject>" + final-average honors (no minor awards) ===== */
+const SUBJ=['Math','English','Filipino','Science','GMRC','EPP','ICT','MAPEH','ARPAN'];
+const awKey=c=>c==='G7Math'?'Math':c;
+const awName=c=>c==='Math'?'Mathematics':c;
+const HON_DEF=[98,95,90,85];
+const HON_LV=[{ic:'🥇',nm:'With Highest Honor'},{ic:'🥈',nm:'With High Honor'},{ic:'🥉',nm:'With Honor'},{ic:'🎖️',nm:'Achiever'}];
+function normHon(t){const a=(Array.isArray(t)&&t.length===4?t:HON_DEF).map((x,i)=>{x=Math.round(+x);return isFinite(x)&&x>0?Math.min(100,x):HON_DEF[i]});for(let i=1;i<4;i++)a[i]=Math.max(1,Math.min(a[i],a[i-1]-1));return a}
+const honThr=()=>normHon(REC.hon);
+/* final average = average % of all quizzes in the record (Quiz 1 .. last quiz); a quiz the student did not take counts as 0 */
+function finalAvg(r){let t=0;for(let i=1;i<=REC.n;i++){const x=r.q[i];if(x&&x.t)t+=x.c/x.t}return t/REC.n*100}
+function honorOf(r){const a=Math.round(finalAvg(r)),t=honThr(),l=a>=t[0]?0:a>=t[1]?1:a>=t[2]?2:a>=t[3]?3:-1;return l<0?null:{l,avg:a}}
+const honorsOn=()=>H.quiz.no>=REC.n;                       /* honors are shown only at the end of the LAST quiz */
+const honorDone=()=>Object.values(REC.rows).some(r=>r.q[REC.n]);
+const honorList=()=>Object.values(REC.rows).map(r=>({r,o:honorOf(r)})).filter(x=>x.o).sort((a,b)=>a.o.l-b.o.l||b.o.avg-a.o.avg||a.r.name.localeCompare(b.r.name));
+function hofData(hon){const B=bestBySubject();return{b:SUBJ.filter(c=>B[c]).map(c=>({c:awName(c),w:B[c].map(h=>({n:h.name,a:h.av,p:h.avg}))})),h:hon?honorList().map(x=>({n:x.r.name,i:HON_LV[x.o.l].ic,t:HON_LV[x.o.l].nm,p:x.o.avg})):null}}
+function hofHtml(h,hd){if(!h)return'';let o=hd===false?'':`<h3 class='center' style='margin-top:14px'>🏅 Major Awards</h3>`;
+o+=h.b&&h.b.length?h.b.map(x=>`<div class='q-ed row'>🏆 <b>Best in ${esc(x.c)}</b><span style='margin-left:auto'>${x.w.map(w=>av(w.a,'s')+esc(w.n)+' ('+w.p+'%)').join(' · ')}</span></div>`).join(''):`<p class='center'><small>No one has reached a 90% average in a subject yet.</small></p>`;
+if(h.h&&h.h.length)o+=`<h3 class='center' style='margin-top:14px'>🎓 Honor Roll</h3>`+h.h.map(x=>`<div class='q-ed row'>${x.i} <b>${esc(x.n)}</b><span style='margin-left:auto'>${esc(x.t)} · ${x.p}%</span></div>`).join('');return o}
 const awChips=l=>(l||[]).map(a=>`<span class='chip' style='background:#7048e8;margin:3px' title='${esc(a[2])}'>${a[0]} ${esc(a[1])}</span>`).join('');
+let LAW=null;
+const awProf=l=>(l.a&&l.a.length?`<p><b>Your awards</b></p>${awChips(l.a)}`:`<p><small>No major award yet. Reach a 90% average in a subject and be the best in the class!</small></p>`)+hofHtml(l.h);
 function streakOf(s){let b=0,c=0;H.quiz.qs.forEach((q,i)=>{if(s.ans[i]===q.a){c++;b=Math.max(b,c)}else c=0});return b}
-function awardsFor(s){const R=ranked(),n=H.quiz.qs.length,f=R.filter(x=>x.answered>0&&x.correct>=Math.ceil(n/2)).sort((a,b)=>a.t-b.t)[0];const base=awardList({correct:s.correct,n,streak:streakOf(s),rank:s.score>0?R.indexOf(s)+1:0,fast:!!f&&f.id===s.id,answered:s.answered});const B=bestBySubject(),k=s.name.trim().toLowerCase();Object.keys(B).forEach(c=>{const h=B[c].find(x=>x.k===k);if(h)base.unshift(['🏆','Best in '+c,'Average '+h.avg+'% in '+c])});return base}
+function awardsFor(s,all){const k=s.name.trim().toLowerCase(),B=bestBySubject(),cu=awKey(H.quiz.cat),out=[];SUBJ.forEach(c=>{if(!all&&c!==cu)return;const h=(B[c]||[]).find(x=>x.k===k);if(h)out.push(['🏆','Best in '+awName(c),'Average '+h.avg+'% in '+awName(c)])});if(H.phase==='ended'&&honorsOn()){const r=REC.rows[k],o=r&&honorOf(r);if(o)out.push([HON_LV[o.l].ic,HON_LV[o.l].nm,'Final average '+o.avg+'%'])}return out}
 function renderProf(){$('#pfAv').innerHTML=av(AV,'l');$('#pfName').textContent=ACCS?ACCS.name:($('#jName').value||'');refreshProf();$('#stAv').innerHTML=avIn(AV);$('#pfGrid').innerHTML=ICONS.map(e=>`<button class='av m' style='cursor:pointer' onclick="setAv('${e}')">${e}</button>`).join('')}
 function setAv(a){AV=a;try{localStorage.setItem('smq_av',a)}catch(e){}renderProf();if(inGame)ch.postMessage({type:'prof',from:me.id,av:a});if(ACCS&&role==='student')ch.postMessage({type:'setav',from:me.id,key:ACCS.key,tok:ACCS.tok,av:a})}
 function openProf(){if(curView!=='stProf')prevView=curView;renderProf();show('stProf')}
@@ -2014,9 +2034,9 @@ function seenInfo(){const c=$('#sCat').value,pool=BANK[c];$('#seenInfo').textCon
 function resetSeen(){const c=$('#sCat').value;if(!BANK[c])return;if(confirm('Let all '+c+' questions appear again?')){delete SEEN[c];saveSeen();loadCat()}}
 
 /* ---- Best in <subject>: top student of the subject, only if their average is 90% or higher ---- */
-function bestBySubject(){const by={};Object.values(REC.rows).forEach(r=>{const cs={};Object.values(r.q).forEach(x=>{if(!x.cat||x.cat==='Custom'||!x.t)return;const e=cs[x.cat]||(cs[x.cat]={p:0,n:0,s:0});e.p+=x.c/x.t;e.n++;e.s+=x.s});Object.keys(cs).forEach(c=>{const e=cs[c],raw=e.p/e.n;(by[c]=by[c]||[]).push({k:r.name.trim().toLowerCase(),name:r.name,av:r.av,raw,avg:Math.round(raw*100),tot:e.s,n:e.n})})});
-const out={};Object.keys(by).forEach(c=>{const l=by[c].sort((a,b)=>b.raw-a.raw||b.tot-a.tot||b.n-a.n),t=l[0];if(t&&t.avg>=90)out[c]=l.filter(x=>Math.abs(x.raw-t.raw)<1e-9&&x.tot===t.tot)});return out}
-function subjectAwardsHtml(){const B=bestBySubject(),ks=['Math','English','Filipino','Science','GMRC','EPP','ICT','MAPEH','ARPAN'].filter(c=>B[c]);return ks.length?ks.map(c=>`<div class='q-ed row'>🏆 <b>Best in ${esc(c)}</b><span style='margin-left:auto'>${B[c].map(h=>av(h.av,'s')+esc(h.name)+' ('+h.avg+'%)').join(' · ')}</span></div>`).join(''):`<p><small>No one has reached a 90% average yet.</small></p>`}
+function bestBySubject(){const by={};Object.values(REC.rows).forEach(r=>{const cs={};Object.values(r.q).forEach(x=>{const c=awKey(x.cat);if(!SUBJ.includes(c)||!x.t)return;const e=cs[c]||(cs[c]={p:0,n:0,s:0});e.p+=x.c/x.t;e.n++;e.s+=x.s});Object.keys(cs).forEach(c=>{const e=cs[c],raw=e.p/e.n;(by[c]=by[c]||[]).push({k:r.name.trim().toLowerCase(),name:r.name,av:r.av,raw,avg:Math.round(raw*100),tot:e.s,n:e.n})})});
+const out={};Object.keys(by).forEach(c=>{const l=by[c].sort((a,b)=>b.raw-a.raw||b.tot-a.tot||b.n-a.n),t=l[0];if(t&&t.raw>=0.9-1e-9)out[c]=l.filter(x=>Math.abs(x.raw-t.raw)<1e-9&&x.tot===t.tot)});return out}
+function subjectAwardsHtml(){return hofHtml(hofData(honorDone()),false)}
 function itemHtml(){const S=Object.values(H.S),n=S.length;if(!n)return'<p><small>No students.</small></p>';
 const rows=H.quiz.qs.map((q,i)=>{let c=0,w=0,u=0;S.forEach(s=>{const a=s.ans[i];if(a==null||a===-1)u++;else if(a===q.a)c++;else w++});return{i,q:q.q,c,w,u,p:Math.round(c/n*100)}});
 const hard=[...rows].sort((a,b)=>a.p-b.p)[0];
@@ -2039,12 +2059,14 @@ let recFrom='hostSetup';
 function openRecord(){recFrom=curView;renderRecord();show('record')}
 function recBack(){show(recFrom)}
 function setRN(){REC.n=Math.max(1,Math.min(20,+$('#rN').value||10));saveR();renderRecord()}
-function clearRec(){if(confirm('Delete the whole class record?')){REC.rows={};saveR();renderRecord()}}
+function clearRec(){if(!confirm('Reset ALL students back to zero?\n\nEvery quiz score, average, award and honor will be erased. Student accounts (names and passwords) stay, so students can still log in.'))return;REC.rows={};Object.values(ACC.u).forEach(a=>{a.prog={}});saveR();accSave();renderRecord();try{if(role==='host')pushAll()}catch(e){}}
+function recResetOne(k){const r=REC.rows[k],a=ACC.u[k],nm=r?r.name:(a?a.name:k);if(!confirm('Reset '+nm+' back to zero?\n\nAll quiz scores, awards and honors of this student will be erased. The account stays.'))return;delete REC.rows[k];if(a)a.prog={};saveR();accSave();renderRecord();try{if(role==='host')pushAll()}catch(e){}}
+function setHon(){REC.hon=normHon([0,1,2,3].map(i=>$('#hn'+i).value));saveR();renderRecord()}
 function recStats(r){const k=Object.values(r.q);return{tot:k.reduce((a,x)=>a+x.s,0),avg:k.length?Math.round(k.reduce((a,x)=>a+x.c/x.t,0)/k.length*100):0}}
-function renderRecord(){$('#rN').value=REC.n;$('#rAwards').innerHTML=subjectAwardsHtml();const rows=Object.values(REC.rows).sort((a,b)=>a.name.localeCompare(b.name)),cols=[...Array(REC.n).keys()].map(i=>i+1),cat=n=>{for(const r of rows)if(r.q[n])return r.q[n].cat;return ''};
-$('#rHead').innerHTML=`<tr><th>Student</th>${cols.map(n=>`<th>Q${n}<br><small>${esc(cat(n))}</small></th>`).join('')}<th>Total</th><th>Avg %</th></tr>`;
-$('#rBody').innerHTML=rows.map(r=>{const st=recStats(r);return`<tr><td>${av(r.av,'s')}<b>${esc(r.name)}</b></td>${cols.map(n=>{const x=r.q[n];return`<td${x?` style="cursor:pointer" title="Tap to see the performance message" onclick="recPM(${esc(JSON.stringify(r.name.trim().toLowerCase()))},${n})"`:''}>${x?`<b>${x.s}</b> <small>(${x.c}/${x.t})</small>${x.l>=0?' '+PM_LV[x.l].ic:''}${x.u?`<br><small title="Unanswered">⏱ ${x.u}</small>`:''}${x.d===0?' <small title="Not completed">⚠</small>':''}`:'—'}</td>`}).join('')}<td><b>${st.tot}</b></td><td>${st.avg}%</td></tr>`}).join('')||`<tr><td>No records yet. Finish a quiz to fill the record.</td></tr>`}
-function recCsv(){const rows=Object.values(REC.rows).sort((a,b)=>a.name.localeCompare(b.name)),cols=[...Array(REC.n).keys()].map(i=>i+1),r=[['Name',...cols.map(n=>'Quiz '+n),'Total','Average %']];rows.forEach(w=>{const st=recStats(w);r.push([w.name,...cols.map(n=>w.q[n]?w.q[n].s:''),st.tot,st.avg])});const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([r.map(x=>x.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n')],{type:'text/csv'}));a.download='class-record.csv';a.click()}
+function renderRecord(){$('#rN').value=REC.n;{const th=honThr();[0,1,2,3].forEach(i=>{const e=$('#hn'+i);if(e)e.value=th[i]})}$('#rAwards').innerHTML=subjectAwardsHtml();const rows=Object.values(REC.rows).sort((a,b)=>a.name.localeCompare(b.name)),cols=[...Array(REC.n).keys()].map(i=>i+1),cat=n=>{for(const r of rows)if(r.q[n])return r.q[n].cat;return ''};
+$('#rHead').innerHTML=`<tr><th>Student</th>${cols.map(n=>`<th>Q${n}<br><small>${esc(cat(n))}</small></th>`).join('')}<th>Total</th><th>Avg %</th>${honorDone()?'<th>Final %</th><th>Honor</th>':''}<th></th></tr>`;
+$('#rBody').innerHTML=rows.map(r=>{const st=recStats(r),hd=honorDone(),ho=hd?honorOf(r):null;return`<tr><td>${av(r.av,'s')}<b>${esc(r.name)}</b></td>${cols.map(n=>{const x=r.q[n];return`<td${x?` style="cursor:pointer" title="Tap to see the performance message" onclick="recPM(${esc(JSON.stringify(r.name.trim().toLowerCase()))},${n})"`:''}>${x?`<b>${x.s}</b> <small>(${x.c}/${x.t})</small>${x.l>=0?' '+PM_LV[x.l].ic:''}${x.u?`<br><small title="Unanswered">⏱ ${x.u}</small>`:''}${x.d===0?' <small title="Not completed">⚠</small>':''}`:'—'}</td>`}).join('')}<td><b>${st.tot}</b></td><td>${st.avg}%</td>${hd?`<td><b>${Math.round(finalAvg(r))}%</b></td><td>${ho?HON_LV[ho.l].ic+' '+esc(HON_LV[ho.l].nm):'—'}</td>`:''}<td><button class="btn r sm" title="Reset this student to zero" onclick="recResetOne(${esc(JSON.stringify(r.name.trim().toLowerCase()))})">🧹</button></td></tr>`}).join('')||`<tr><td>No records yet. Finish a quiz to fill the record.</td></tr>`}
+function recCsv(){const rows=Object.values(REC.rows).sort((a,b)=>a.name.localeCompare(b.name)),cols=[...Array(REC.n).keys()].map(i=>i+1),hd=honorDone(),r=[['Name',...cols.map(n=>'Quiz '+n),'Total','Average %',...(hd?['Final %','Honor']:[])]];rows.forEach(w=>{const st=recStats(w),o=hd?honorOf(w):null;r.push([w.name,...cols.map(n=>w.q[n]?w.q[n].s:''),st.tot,st.avg,...(hd?[Math.round(finalAvg(w)),o?HON_LV[o.l].nm:'']:[])])});const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([r.map(x=>x.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n')],{type:'text/csv'}));a.download='class-record.csv';a.click()}
 const recChips=(rec,n)=>[...Array(n||10).keys()].map(i=>`<span class='chip' style='background:${rec&&rec[i+1]?'#2f9e44':'#adb5bd'};margin:3px'>Q${i+1}: ${rec&&rec[i+1]?rec[i+1].s:'—'}</span>`).join('');
 function newQuiz(){H.phase='edit';H.qi=-1;H.endsAt=0;pushAll();$('#sQuizNo').value=nextNo();$('#sCat').value=H.quiz.cat;loadCat();accUI();show('hostSetup')}
 
@@ -2296,7 +2318,7 @@ if(q&&H.phase!=='lobby'&&H.phase!=='ended'){o.q=q.q;o.opts=q.o;o.my=s.ans[H.qi]?
 if(H.phase==='revealed'){o.correct=q.a;o.ok=s.ans[H.qi]===q.a}
 if(H.phase==='ended'){o.score=s.score;o.right=s.correct;o.wrong=s.incorrect}
 if(Q.rank&&H.phase==='ended'){const R=ranked();o.rank=R.findIndex(x=>x.id===s.id)+1;o.board=R.map(x=>({n:x.name,a:x.av,s:x.score,y:x.id===s.id}))}
-if(H.phase==='ended'){o.aw=awardsFor(s);o.pm=pmFor(s)}
+if(H.phase==='ended'){o.aw=awardsFor(s);o.awAll=awardsFor(s,true);o.hof=hofData(honorsOn());o.pm=pmFor(s)}else if(H.phase==='lobby'||H.phase==='edit'){o.awAll=awardsFor(s,true);o.hof=hofData(false)}
 return o}
 const pushAll=()=>Object.values(H.S).forEach(s=>sendTo(s.id,view(s)));
 function ranked(){return Object.values(H.S).sort((a,b)=>b.score-a.score||b.correct-a.correct||a.t-b.t)}
@@ -2354,7 +2376,7 @@ function viewSolo(s){const Q=H.quiz,n=Q.qs.length,ended=H.phase==='ended',done=e
 const o={type:'state',solo:1,mode:'solo',title:Q.title,instr:Q.instr,cat:Q.cat,no:Q.no,rec:recFor(s),recN:REC.n,time:Q.time,total:n,qi:Math.max(0,Math.min(s.qi,n-1)),left:0,remain:0,live:Q.live?s.score:null};
 if(done){o.phase='ended';o.score=s.score;o.right=s.correct;o.wrong=s.incorrect;o.skip=Math.max(0,n-s.correct-s.incorrect);o.wait=!ended;
 if(ended&&Q.rank){const R=ranked();o.rank=R.findIndex(x=>x.id===s.id)+1;o.board=R.map(x=>({n:x.name,a:x.av,s:x.score,y:x.id===s.id}))}
-if(ended)o.aw=awardsFor(s);o.pm=pmFor(s);o.incomplete=ended&&!s.fin;return o}
+if(ended){o.aw=awardsFor(s);o.awAll=awardsFor(s,true);o.hof=hofData(honorsOn())}o.pm=pmFor(s);o.incomplete=ended&&!s.fin;return o}
 const r=realQ(s),q=Q.qs[r];o.phase=H.phase==='paused'?'paused':'question';o.q=q.q;o.opts=q.o;o.my=s.ans[r]??null;o.locked=!!s.hold;
 if(H.phase==='question'&&s.endsAt)o.left=Math.max(0,s.endsAt-Date.now());if(H.phase==='paused')o.remain=s.remain||0;return o}
 
@@ -2373,7 +2395,7 @@ $('#bNext').textContent=H.qi>=n-1?'Finish ✔':'Next ➜';
 $('#hTable').innerHTML=S.map(s=>{const pr=Math.round((soloOn()?(s.fin?n:Math.max(0,s.qi)):s.answered)/n*100);return`<tr><td>${av(s.av,'s')}<b>${esc(s.name)}</b></td><td><span class="dot" style="background:${online(s)?'#2f9e44':'#e03131'}"></span>${online(s)?'Online':'Offline'}</td><td>${soloOn()?(s.fin?'🏁 done':s.qi<0?'—':(s.qi+1)+'/'+n+(s.endsAt&&!s.hold&&p==='question'?' · '+Math.max(0,Math.ceil((s.endsAt-Date.now())/1000))+'s':'')):H.qi<0?'—':H.qi+1+'/'+n}</td><td>${s.answered}/${n}</td><td>${s.correct}</td><td>${s.incorrect}</td><td>${unans(s)}</td><td><b>${s.score}</b></td><td style="min-width:110px"><div class="bar"><i style="width:${pr}%"></i></div>${pr}%</td><td><button class="btn r sm" onclick="kick('${s.id}')">Remove</button></td></tr>`}).join('')||'<tr><td colspan="10">No students yet.</td></tr>';
 $('#hBoard').innerHTML=ranked().map((s,i)=>`<tr style='${i<3?'background:#fff8e1;font-weight:700':''}'><td>${['🥇','🥈','🥉'][i]||'#'+(i+1)}</td><td>${av(s.av,'s')}${esc(s.name)}</td><td><b>${s.score}</b></td><td>${s.correct}</td><td>${s.incorrect}</td><td>${Math.round(s.answered/n*100)}%</td><td>${p==='ended'?awardsFor(s).map(a=>a[0]).join(' '):''}</td></tr>`).join('');
 $('#hPod').innerHTML=p==='lobby'?'':podium(ranked().map(s=>({n:s.name,a:s.av,s:s.score})));
-$('#hAwCard').hidden=p!=='ended';$('#hItemCard').hidden=p!=='ended';if(p==='ended')$('#hItems').innerHTML=itemHtml();if(p==='ended')$('#hAwards').innerHTML=subjectAwardsHtml()+ranked().map(s=>`<div class='q-ed row'>${av(s.av,'m')}<b>${esc(s.name)}</b>${awChips(awardsFor(s))}</div>`).join('')}
+$('#hAwCard').hidden=p!=='ended';$('#hItemCard').hidden=p!=='ended';if(p==='ended')$('#hItems').innerHTML=itemHtml();if(p==='ended')$('#hAwards').innerHTML=hofHtml(hofData(honorsOn()),false)+ranked().map(s=>({s,a:awardsFor(s,true)})).filter(x=>x.a.length).map(x=>`<div class='q-ed row'>${av(x.s.av,'m')}<b>${esc(x.s.name)}</b>${awChips(x.a)}</div>`).join('')}
 
 /* ================= STUDENT ================= */
 let me=null,cur=null;
@@ -2392,8 +2414,8 @@ else if(m.type==='state'){cur=m;cur.rx=Date.now();renderStudent()}});
 setInterval(()=>{if(role==='student'&&me&&me.joined&&ch)ch.postMessage({type:'hb',from:me.id})},2000);
 function pick(c){sfxUnlock();if(!cur||cur.phase!=='question'||cur.my!=null||cur.locked)return;cur.my=c;renderStudent();ch.postMessage({type:'answer',from:me.id,qi:cur.qi,c})}
 function renderStudent(){const m=cur;inGame=true;show(['st','stRanks','stProf'].includes(curView)?curView:'st');$('#stTitle').textContent=m.title;$('#stInstr').textContent=(me?'👤 '+me.name+' · ':'')+(m.cat?'📚 '+m.cat+' · Quiz #'+m.no+' — ':'')+(m.instr||'');$('#pfRec').innerHTML=recChips(m.rec,m.recN);
-$('#stAw').innerHTML='';$('#stBoard').innerHTML='';renderRanks();$('#pfAw').innerHTML=m.aw?awChips(m.aw):'Awards appear after the quiz.';const lobby=m.phase==='lobby',end=m.phase==='ended';$('#stWait').hidden=!lobby;$('#stPlay').hidden=lobby||end;$('#stEnd').hidden=!end;$('#stPMW').hidden=true;
-if(end){const pc=Math.round(m.right/m.total*100);$('#stEnd').innerHTML=`🎉 Quiz finished!<div class="code">${m.score}</div>points<br>✅ ${m.right} correct · ❌ ${m.wrong} incorrect · ⏱ ${m.skip!=null?m.skip:Math.max(0,m.total-m.right-m.wrong)} unanswered · ${pc}%${m.rank?`<br>🏆 Rank #${m.rank}`:''}${m.wait?'<br><small>⏳ Waiting for the other students and the teacher…</small>':''}`;$('#stAw').innerHTML=awChips(m.aw);$('#stBoard').innerHTML=boardHtml(m.board);pmHook(m);return}
+$('#stAw').innerHTML='';$('#stBoard').innerHTML='';renderRanks();if(m.awAll)LAW={a:m.awAll,h:m.hof};$('#pfAw').innerHTML=LAW?awProf(LAW):'Awards appear after the quiz.';const lobby=m.phase==='lobby',end=m.phase==='ended';$('#stWait').hidden=!lobby;$('#stPlay').hidden=lobby||end;$('#stEnd').hidden=!end;$('#stPMW').hidden=true;
+if(end){const pc=Math.round(m.right/m.total*100);$('#stEnd').innerHTML=`🎉 Quiz finished!<div class="code">${m.score}</div>points<br>✅ ${m.right} correct · ❌ ${m.wrong} incorrect · ⏱ ${m.skip!=null?m.skip:Math.max(0,m.total-m.right-m.wrong)} unanswered · ${pc}%${m.rank?`<br>🏆 Rank #${m.rank}`:''}${m.wait?'<br><small>⏳ Waiting for the other students and the teacher…</small>':''}`;$('#stAw').innerHTML=awChips(m.aw)+hofHtml(m.hof);$('#stBoard').innerHTML=boardHtml(m.board);pmHook(m);return}
 function renderRanks(){const b=cur&&cur.board;$('#rkBody').innerHTML=b?boardHtml(b)+(cur.rank?`<p class='center'><b>Your rank: #${cur.rank}</b></p>`:''):'<p class="center">🔒 The ranking and scores appear when the quiz is finished.</p>'}
 
 if(lobby)return;
@@ -2421,5 +2443,5 @@ $('#pOpts').innerHTML=q.o.map((o,i)=>`<button class="opt ${P.a[P.i]===i?'sel':''
 function pPick(i){P.a[P.i]=i;pShow()}
 function pNext(){if(P.i<P.qs.length-1){P.i++;pShow()}else pFinish()}
 function pFinish(){const N=P.qs.length,ok=P.a.filter((a,i)=>a===P.qs[i].a).length,pc=Math.round(ok/N*100);let stk=0,cc=0;P.qs.forEach((q,i)=>{if(P.a[i]===q.a){cc++;stk=Math.max(stk,cc)}else cc=0});$('#pPlay').hidden=true;$('#pRes').hidden=false;
-$('#pRes').innerHTML=`<h2 class="center">${esc(P.name)}, your score:</h2><div class="center code">${ok}/${N}</div><p class="center"><b>${ok} correct · ${N-ok} incorrect · ${pc}%</b></p><div class="center">${awChips(awardList({correct:ok,n:N,streak:stk,rank:0,fast:false,answered:N}))}</div>`+P.qs.map((q,i)=>{const g=P.a[i]===q.a;return`<div class="q-ed">${g?'✅':'❌'} <b>${i+1}. ${esc(q.q)}</b><br>Your answer: ${esc(q.o[P.a[i]])}${g?'':`<br>Correct: <b style="color:#2f9e44">${L[q.a]}. ${esc(q.o[q.a])}</b>`}</div>`}).join('')+`<div class="row"><button class="btn" onclick="startPrac()">↺ Restart</button><button class="btn w" onclick="location.reload()">Home</button></div>`}
+$('#pRes').innerHTML=`<h2 class="center">${esc(P.name)}, your score:</h2><div class="center code">${ok}/${N}</div><p class="center"><b>${ok} correct · ${N-ok} incorrect · ${pc}%</b></p>`+P.qs.map((q,i)=>{const g=P.a[i]===q.a;return`<div class="q-ed">${g?'✅':'❌'} <b>${i+1}. ${esc(q.q)}</b><br>Your answer: ${esc(q.o[P.a[i]])}${g?'':`<br>Correct: <b style="color:#2f9e44">${L[q.a]}. ${esc(q.o[q.a])}</b>`}</div>`}).join('')+`<div class="row"><button class="btn" onclick="startPrac()">↺ Restart</button><button class="btn w" onclick="location.reload()">Home</button></div>`}
 </script></body></html>
