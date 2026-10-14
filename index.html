@@ -2052,7 +2052,13 @@ function b2buf(b64,cb){const t=atob(b64),u=new Uint8Array(t.length);for(let i=0;
 function okLoad(){if(!AC)return;try{if(!OKBUF)b2buf(OKB64,x=>{OKBUF=x});if(!NOBUF)b2buf(NOB64,x=>{NOBUF=x})}catch(e){}}
 function sfxUnlock(){try{AC=AC||new(window.AudioContext||window.webkitAudioContext)();if(AC.state==='suspended')AC.resume();okLoad()}catch(e){}}
 function tone(f,t0,d,type,v){const T=AC.currentTime+t0,o=AC.createOscillator(),g=AC.createGain();o.type=type;o.frequency.setValueAtTime(f,T);g.gain.setValueAtTime(.0001,T);g.gain.exponentialRampToValueAtTime(v,T+.02);g.gain.exponentialRampToValueAtTime(.0001,T+d);o.connect(g);g.connect(AC.destination);o.start(T);o.stop(T+d+.05)}
-function sfx(good){if(!SND)return;sfxUnlock();if(!AC)return;try{if(good&&OKBUF){const o=AC.createBufferSource();o.buffer=OKBUF;o.connect(AC.destination);o.start();return}if(!good&&NOBUF){const o=AC.createBufferSource();o.buffer=NOBUF;o.connect(AC.destination);o.start();return}if(good)[523,659,784,1047].forEach((f,i)=>tone(f,i*.11,.3,'triangle',.28));else{tone(220,0,.25,'sawtooth',.16);tone(165,.22,.45,'sawtooth',.16)}}catch(e){}}
+let OKA=null,NOA=null,UNL=false;
+function sndInit(){if(OKA)return;try{OKA=new Audio('data:audio/mpeg;base64,'+OKB64);NOA=new Audio('data:audio/mpeg;base64,'+NOB64);[OKA,NOA].forEach(a=>{a.preload='auto';a.setAttribute('playsinline','');a.load()})}catch(e){}}
+/* phones only allow sound after a real tap: the first tap/key press "unlocks" the two answer sounds */
+function sndUnlock(){if(UNL)return;sndInit();try{sfxUnlock()}catch(e){}[OKA,NOA].forEach(a=>{if(!a)return;try{a.muted=true;const p=a.play(),d=()=>{try{a.pause();a.currentTime=0}catch(e){}a.muted=false};if(p&&p.then)p.then(()=>{UNL=true;d()}).catch(()=>{a.muted=false});else d()}catch(e){}})}
+['touchend','click','keydown','pointerup'].forEach(ev=>document.addEventListener(ev,sndUnlock,true));
+function tones(good){if(!AC)return;try{if(good)[523,659,784,1047].forEach((f,i)=>tone(f,i*.11,.3,'triangle',.28));else{tone(220,0,.25,'sawtooth',.16);tone(165,.22,.45,'sawtooth',.16)}}catch(e){}}
+function sfx(good){if(!SND)return;try{sndInit();const a=good?OKA:NOA;if(a){a.muted=false;a.currentTime=0;const p=a.play();if(p&&p.catch)p.catch(()=>{sfxUnlock();tones(good)});return}}catch(e){}sfxUnlock();tones(good)}
 function togSnd(){SND=!SND;try{localStorage.setItem('smq_snd',SND?'1':'0')}catch(e){}$('#stSnd').textContent=SND?'🔊':'🔇';if(SND)sfx(true)}
 $('#stSnd').textContent=SND?'🔊':'🔇';
 function loadCat(){const c=$('#sCat').value;H.quiz.cat=c;if(c==='Custom'){seenInfo();return renderEditor()}H.quiz.qs=freshQs(c,Math.max(1,Math.min(200,+$('#sCount').value||10)),$('#sShuf').checked,SEEN);$('#sTitle').value=c==='G7Math'?'Grade 7 Mathematics – Integers and Basic Operations':c+' Quiz';if(c==='G7Math')$('#sInstr').value='Read each question carefully. Select the correct answer. Each correct answer earns 10 points.';seenInfo();renderEditor()}
