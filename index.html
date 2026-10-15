@@ -146,6 +146,7 @@ table{font-size:12px}th,td{padding:7px}
 .pop-ov{position:fixed;inset:0;background:#000a;z-index:60;display:flex;align-items:center;justify-content:center;padding:16px}.pop-ov[hidden]{display:none}.pop-card{background:#fff;color:#222;border-radius:20px;max-width:520px;width:100%;max-height:85vh;overflow:auto;padding:18px;box-shadow:0 20px 60px #0008}
 </style><style>.podt{display:flex;flex-direction:column;gap:12px;margin:14px 0 8px}.ptier{display:flex;justify-content:center;flex-wrap:wrap;gap:14px}.pc{width:96px}.pc1{width:124px}.pc3{margin-top:0}</style>
 <style>.catt{display:block;max-width:100%;max-height:200px;border-radius:12px;margin:4px 0;cursor:pointer}.cfile{display:flex;gap:8px;align-items:center;background:#0000000d;border-radius:12px;padding:8px 10px;margin:4px 0;cursor:pointer;font-size:14px;text-align:left}#attView{position:fixed;inset:0;background:#000d;z-index:300;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:12px}#attView[hidden]{display:none}#attView img{max-width:100%;max-height:74vh;border-radius:12px}.avb{display:flex;gap:10px}</style>
+<style>html,body,button,.btn,.opt,.tabs button,[onclick]{touch-action:manipulation}</style>
 </head><body><svg style="position:absolute;width:0;height:0" aria-hidden="true"><defs>
 <symbol id="i-doc" viewBox="0 0 24 24"><path d="M6 2h8l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" fill="currentColor"/><path d="M8 12h8M8 16h8M8 8h4" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/></symbol>
 <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 3h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-8l-5 4v-4H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" fill="currentColor"/><path d="M7 8h10M7 12h6" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/></symbol>
@@ -2481,4 +2482,10 @@ function pNext(){if(P.i<P.qs.length-1){P.i++;pShow()}else pFinish()}
 function pFinish(){const N=P.qs.length,ok=P.a.filter((a,i)=>a===P.qs[i].a).length,pc=Math.round(ok/N*100);let stk=0,cc=0;P.qs.forEach((q,i)=>{if(P.a[i]===q.a){cc++;stk=Math.max(stk,cc)}else cc=0});$('#pPlay').hidden=true;$('#pRes').hidden=false;
 $('#pRes').innerHTML=`<h2 class="center">${esc(P.name)}, your score:</h2><div class="center code">${ok}/${N}</div><p class="center"><b>${ok} correct · ${N-ok} incorrect · ${pc}%</b></p>`+P.qs.map((q,i)=>{const g=P.a[i]===q.a;return`<div class="q-ed">${g?'✅':'❌'} <b>${i+1}. ${esc(q.q)}</b><br>Your answer: ${esc(q.o[P.a[i]])}${g?'':`<br>Correct: <b style="color:#2f9e44">${L[q.a]}. ${esc(q.o[q.a])}</b>`}</div>`}).join('')+`<div class="row"><button class="btn" onclick="startPrac()">↺ Restart</button><button class="btn w" onclick="location.reload()">Home</button></div>`}
 </script><div id="attView" hidden onclick="if(event.target===this)attClose()"></div><input type="file" id="attIn" hidden onchange="attPicked(this.files[0])">
+<script>
+/* Taps were sometimes lost because the screens rebuilt their buttons twice a second. Identical content is no longer rebuilt, so a tap always lands on the same button. */
+(function(){var d=Object.getOwnPropertyDescriptor(Element.prototype,'innerHTML');if(!d||!d.set)return;
+['stOpts','stQ','stWait','stBoard','stAw','stEnd','pfAw','pfRec','hAwards','hBoard','hItems','hPod','hQ','hTable'].forEach(function(id){var e=document.getElementById(id);if(!e)return;
+Object.defineProperty(e,'innerHTML',{configurable:true,get:function(){return d.get.call(this)},set:function(v){v=String(v);if(this.__h===v&&this.childNodes.length===this.__n)return;d.set.call(this,v);this.__h=v;this.__n=this.childNodes.length}})})})();
+</script>
 </body></html>
